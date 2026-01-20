@@ -1,14 +1,10 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
+#include <unistd.h>
 
 typedef unsigned char byte;
-
-struct args {
-  char **options;
-  int num_options;
-  char *input;
-};
 
 int line_len(byte *line) {
   int len = 0;
@@ -32,11 +28,12 @@ void cleanStr(byte *str) {
 void hex_dump(FILE *file) {
   int n = 0, size = 16, ch;
   long offset;
+  long manual_offset = 0;
   byte *line;
   line = malloc(size + 1);
 
   offset = ftell(file);
-  printf("%08lx: ", offset);
+  printf("%08lx: ", offset != -1 ? offset : manual_offset);
 
   while ((ch = getc(file)) != EOF) {
     // print the hex
@@ -54,7 +51,7 @@ void hex_dump(FILE *file) {
       n = 0;
 
       offset = ftell(file);
-      printf("%08lx: ", offset);
+      printf("%08lx: ", offset != -1 ? offset : (manual_offset += size));
     }
   }
 
@@ -126,55 +123,72 @@ void bin_dump(FILE *file) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("Invalid usage!\nUsage: xxd [options] <filename>");
-    exit(1);
-  }
+  int opt;
+  int reverse = 0;
+  char *seek = NULL;
+  FILE *input = NULL;
 
-  struct args *parse_args = malloc(sizeof *parse_args);
-  if (!parse_args) {
-    perror("error: ");
-    exit(1);
-  }
-  parse_args->input = NULL;
-  parse_args->options = malloc(sizeof(*parse_args->options));
-  if (!parse_args->options) {
-    perror("error: ");
-    exit(1);
-  }
-
-  parse_args->num_options = 0;
-
-  int i = 1;
-  while (argv[i]) {
-    if (i + 1 == argc) {
-      parse_args->input = argv[i];
-    } else {
-      parse_args->options[parse_args->num_options++] = argv[i];
-      parse_args->options =
-          realloc(parse_args->options,
-                  (parse_args->num_options + 1) * sizeof(*parse_args->options));
-      if (!parse_args->options) {
-        perror("error: ");
-        exit(1);
-      }
+  while ((opt = getopt(argc, argv, "rs:")) != -1) {
+    switch (opt) {
+    case 'r':
+      reverse = 1;
+      break;
+    case 's':
+      seek = optarg;
+      break;
+    default:
+      fprintf(stdin, "Usage: %s [options] [infile [outfile]\n", argv[0]);
+      return 1;
     }
-    i++;
   }
 
-  const char *file_name = parse_args->input;
-
-  FILE *file = fopen(file_name, "r");
-  if (file == NULL) {
-    perror("error");
-    exit(-1);
-  }
-
-  if (parse_args->num_options == 0) {
-    hex_dump(file);
+  if (optind == argc) {
+    input = stdin;
   } else {
-    bin_dump(file);
+    char *file_name = argv[optind];
+    if (file_name == NULL) {
+      printf("no file name provided\n");
+    }
+
+    input = fopen(file_name, "r");
+    if (!input) {
+      perror("idk bro");
+      exit(-1);
+    }
   }
 
-  fclose(file);
+  if (seek) {
+    int pos = 0;
+    int whence = 0;
+    int i = 2;
+
+    if (seek[0] == '-') {
+      i = 3;
+    }
+
+    while (seek[i]) {
+      pos = pos * 16 + hex_to_int(seek[i++]);
+    }
+
+    if (seek[0] == '-') {
+      whence = 2;
+      pos = -pos;
+    }
+
+    int n = fseek(input, pos, whence);
+    if (n != 0) {
+      perror("error: ");
+      exit(1);
+    }
+  }
+
+  if (reverse) {
+    bin_dump(input);
+  } else {
+    hex_dump(input);
+  }
+
+  if (input != stdin) {
+    fclose(input);
+  }
 }
