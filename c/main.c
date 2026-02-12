@@ -8,50 +8,47 @@ typedef unsigned char byte;
 
 int line_len(byte *line) {
   int len = 0;
-  while (line[len++])
-    ;
+  while (line[len])
+    len++;
   ;
   return len;
 }
 
-void cleanStr(byte *str) {
+void clean_str(byte *str) {
   byte *temp = str;
   int i = 0;
   while (temp[i]) {
-    if (temp[i] == '\n') {
+    if (temp[i] == '\n' || temp[i] == '\t') {
       temp[i] = '.';
     }
     i++;
   }
 }
 
-void hex_dump(FILE *file) {
+void hex_dump(FILE *in_file, FILE *out_file) {
   int n = 0, size = 16, ch;
   long offset;
-  long manual_offset = 0;
   byte *line;
   line = malloc(size + 1);
 
-  offset = ftell(file);
-  printf("%08lx: ", offset != -1 ? offset : manual_offset);
-
-  while ((ch = getc(file)) != EOF) {
+  while ((ch = getc(in_file)) != EOF) {
+    if (n == 0) {
+      offset = ftell(in_file) - 1;
+      fprintf(out_file, "%08lx: ", offset);
+    }
     // print the hex
-    printf("%02x", ch);
+    fprintf(out_file, "%02x", ch);
     if (n % 2 != 0) {
-      printf(" ");
+      fprintf(out_file, " ");
     }
 
     line[n++] = ch;
 
     if (n == size) {
       line[n] = '\0';
-      cleanStr(line);
-      printf(" %s\n", line);
+      clean_str(line);
+      fprintf(out_file, " %s\n", line);
       n = 0;
-
-      offset = ftell(file);
-      printf("%08lx: ", offset != -1 ? offset : (manual_offset += size));
     }
   }
 
@@ -59,11 +56,11 @@ void hex_dump(FILE *file) {
     line[n] = '\0';
 
     for (int i = n; i < 16; i++) {
-      printf("   ");
+      fprintf(out_file, "   ");
     }
 
-    cleanStr(line);
-    printf(" %s", line);
+    clean_str(line);
+    fprintf(out_file, " %s", line);
   }
 }
 
@@ -84,11 +81,11 @@ int hex_to_ascii(char c, char d) {
   return high + low;
 }
 
-void bin_dump(FILE *file) {
+void bin_dump(FILE *in_file, FILE *out_file) {
   int ch, n = 0, size = 128;
   byte *line = malloc(size + 1);
 
-  while ((ch = getc(file)) != EOF) {
+  while ((ch = getc(in_file)) != EOF) {
     if (n == size) {
       size *= 2;
       line = realloc(line, size);
@@ -101,7 +98,7 @@ void bin_dump(FILE *file) {
       char buf = 0;
       for (i = 0; i < length; i++) {
         if (i % 2 != 0) {
-          printf("%c", hex_to_ascii(buf, line[i]));
+          fprintf(out_file, "%c", hex_to_ascii(buf, line[i]));
         } else {
           buf = line[i];
         }
@@ -122,11 +119,12 @@ void bin_dump(FILE *file) {
   }
 }
 
+#ifndef DOING_UNIT_TESTS
 int main(int argc, char **argv) {
   int opt;
   int reverse = 0;
   char *seek = NULL;
-  FILE *input = NULL;
+  FILE *input = NULL, *output = NULL;
 
   while ((opt = getopt(argc, argv, "rs:")) != -1) {
     switch (opt) {
@@ -143,14 +141,35 @@ int main(int argc, char **argv) {
   }
 
   if (optind == argc) {
-    input = stdin;
+    FILE *temp_file = fopen("/tmp/temp_xxd", "w");
+    if (!temp_file) {
+      perror("error: ");
+      exit(1);
+    }
+    int ch;
+
+    while ((ch = getchar()) != EOF) {
+      putc(ch, temp_file);
+    }
+
+    rewind(temp_file);
+    fclose(temp_file);
+
+    input = fopen("/tmp/temp_xxd", "r");
+    if (!input) {
+      perror("error: ");
+      exit(1);
+    }
   } else {
-    char *file_name = argv[optind];
-    if (file_name == NULL) {
+    char *in_file = (optind < argc) ? argv[optind] : NULL;
+    char *out_file = (optind + 1 < argc) ? argv[optind + 1] : NULL;
+
+    if (in_file == NULL) {
       printf("no file name provided\n");
     }
 
-    input = fopen(file_name, "r");
+    input = fopen(in_file, "r");
+    output = out_file ? fopen(out_file, "w+") : NULL;
     if (!input) {
       perror("idk bro");
       exit(-1);
@@ -182,13 +201,20 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (reverse) {
-    bin_dump(input);
-  } else {
-    hex_dump(input);
+  switch (reverse) {
+  case 0:
+    hex_dump(input, output ? output : stdout);
+    break;
+  case 1:
+    bin_dump(input, output ? output : stdout);
+    break;
   }
 
   if (input != stdin) {
     fclose(input);
   }
+  if (output && output != stdout) {
+    fclose(output);
+  }
 }
+#endif
